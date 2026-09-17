@@ -608,6 +608,32 @@ export class VisualizationPanel {
     }
 
     /**
+     * Compute the visual offset for a state-transition edge.
+     *
+     * Same-direction transitions are fanned out symmetrically. When the
+     * opposite direction also exists, each direction is shifted to opposite
+     * sides of the centerline so antiparallel edges never overlap and appear
+     * as a single combined transition.
+     */
+    public static getStateTransitionOffset(
+        sourceKey: string,
+        targetKey: string,
+        transitionIndex: number,
+        totalTransitions: number,
+        hasOppositeDirection: boolean,
+        spacing: number = 15,
+    ): number {
+        const baseOffset = (transitionIndex - (totalTransitions - 1) / 2) * spacing;
+        if (!hasOppositeDirection || sourceKey === targetKey) {
+            return baseOffset;
+        }
+
+        const directionSign = sourceKey < targetKey ? -1 : 1;
+        const directionalShift = (((totalTransitions - 1) / 2) + 0.5) * spacing;
+        return baseOffset + directionSign * directionalShift;
+    }
+
+    /**
      * Merge same-named package DTOs so that packages declared across
      * multiple files appear as a single node with combined children.
      */
@@ -14313,7 +14339,7 @@ export class VisualizationPanel {
             }
 
             // Function to calculate edge path between two states
-            function calculateEdgePath(sourceKey, targetKey, transitionIndex = 0, totalTransitions = 1) {
+            function calculateEdgePath(sourceKey, targetKey, offset = 0) {
                 const sourcePos = statePositions.get(sourceKey);
                 const targetPos = statePositions.get(targetKey);
 
@@ -14341,9 +14367,6 @@ export class VisualizationPanel {
                 let startX, startY, endX, endY;
                 const dx = tx - sx;
                 const dy = ty - sy;
-
-                // Offset for multiple transitions between same states
-                const offset = (transitionIndex - (totalTransitions - 1) / 2) * 15;
 
                 if (Math.abs(dx) > Math.abs(dy)) {
                     // Horizontal connection
@@ -14412,7 +14435,9 @@ export class VisualizationPanel {
                 transitionGroup.selectAll('*').remove();
 
                 // Group transitions by source-target pair to handle multiple edges
-                const transitionPairs = new Map();
+                // and by unordered pair so opposite directions can be separated.
+                const directionalPairs = new Map();
+                const normalizedTransitions = [];
                 machineTransitions.forEach(t => {
                     const sourceKey = stateNameToKey.get(t.source) || stateNameToKey.get(getSimpleStateName(t.source)) || t.source;
                     const targetKey = stateNameToKey.get(t.target) || stateNameToKey.get(getSimpleStateName(t.target)) || t.target;
@@ -14420,64 +14445,76 @@ export class VisualizationPanel {
                         return;
                     }
 
-                    const pairKey = sourceKey + '->' + targetKey;
-                    if (!transitionPairs.has(pairKey)) {
-                        transitionPairs.set(pairKey, []);
-                    }
-                    transitionPairs.get(pairKey).push({
+                    const normalized = {
                         ...t,
                         source: sourceKey,
                         target: targetKey
-                    });
+                    };
+                    normalizedTransitions.push(normalized);
+
+                    const directionalPairKey = sourceKey + '->' + targetKey;
+                    if (!directionalPairs.has(directionalPairKey)) {
+                        directionalPairs.set(directionalPairKey, []);
+                    }
+                    directionalPairs.get(directionalPairKey).push(normalized);
                 });
 
-                transitionPairs.forEach((transitionsForPair, pairKey) => {
-                    transitionsForPair.forEach((transition, index) => {
-                        const edgeData = calculateEdgePath(
-                            transition.source,
-                            transition.target,
-                            index,
-                            transitionsForPair.length
-                        );
+                normalizedTransitions.forEach((transition) => {
+                    const directionalPairKey = transition.source + '->' + transition.target;
+                    const directionalGroup = directionalPairs.get(directionalPairKey) || [];
+                    const directionalIndex = directionalGroup.indexOf(transition);
+                    const oppositeDirectionalKey = transition.target + '->' + transition.source;
+                    const hasOppositeDirection = directionalPairs.has(oppositeDirectionalKey);
+                    const offset = VisualizationPanel.getStateTransitionOffset(
+                        transition.source,
+                        transition.target,
+                        directionalIndex,
+                        directionalGroup.length,
+                        hasOppositeDirection
+                    );
+                    const edgeData = calculateEdgePath(
+                        transition.source,
+                        transition.target,
+                        offset
+                    );
 
-                        if (!edgeData) return;
+                    if (!edgeData) return;
 
-                        // Draw the path
-                        transitionGroup.append('path')
-                            .attr('d', edgeData.path)
-                            .attr('class', 'transition-path')
-                            .style('fill', 'none')
-                            .style('stroke', 'var(--vscode-charts-purple)')
-                            .style('stroke-width', '2px')
-                            .style('marker-end', 'url(#state-arrowhead)');
+                    // Draw the path
+                    transitionGroup.append('path')
+                        .attr('d', edgeData.path)
+                        .attr('class', 'transition-path')
+                        .style('fill', 'none')
+                        .style('stroke', 'var(--vscode-charts-purple)')
+                        .style('stroke-width', '2px')
+                        .style('marker-end', 'url(#state-arrowhead)');
 
-                        // Draw label if present
-                        if (transition.label) {
-                            // Background for label
-                            const labelText = transition.label.length > 15
-                                ? transition.label.substring(0, 12) + '...'
-                                : transition.label;
+                    // Draw label if present
+                    if (transition.label) {
+                        // Background for label
+                        const labelText = transition.label.length > 15
+                            ? transition.label.substring(0, 12) + '...'
+                            : transition.label;
 
-                            transitionGroup.append('rect')
-                                .attr('x', edgeData.labelX - 25)
-                                .attr('y', edgeData.labelY - 10)
-                                .attr('width', 50)
-                                .attr('height', 14)
-                                .attr('rx', 3)
-                                .style('fill', 'var(--vscode-editor-background)')
-                                .style('opacity', 0.9);
+                        transitionGroup.append('rect')
+                            .attr('x', edgeData.labelX - 25)
+                            .attr('y', edgeData.labelY - 10)
+                            .attr('width', 50)
+                            .attr('height', 14)
+                            .attr('rx', 3)
+                            .style('fill', 'var(--vscode-editor-background)')
+                            .style('opacity', 0.9);
 
-                            transitionGroup.append('text')
-                                .attr('x', edgeData.labelX)
-                                .attr('y', edgeData.labelY)
-                                .attr('text-anchor', 'middle')
-                                .attr('dominant-baseline', 'middle')
-                                .text(labelText)
-                                .style('font-size', '10px')
-                                .style('fill', 'var(--vscode-charts-purple)')
-                                .style('font-weight', '500');
-                        }
-                    });
+                        transitionGroup.append('text')
+                            .attr('x', edgeData.labelX)
+                            .attr('y', edgeData.labelY)
+                            .attr('text-anchor', 'middle')
+                            .attr('dominant-baseline', 'middle')
+                            .text(labelText)
+                            .style('font-size', '10px')
+                            .style('fill', 'var(--vscode-charts-purple)')
+                            .style('font-weight', '500');
+                    }
                 });
             }
 

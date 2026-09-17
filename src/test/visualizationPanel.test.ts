@@ -332,5 +332,31 @@ suite('State Transition Extraction', () => {
         // transition — neither should appear as a plain succession here.
         assert.deepStrictEqual(VisualizationPanel.extractSuccessionTransitions(src), []);
     });
-});
 
+    test('separates opposite-direction transitions onto opposite sides', () => {
+        const forward = VisualizationPanel.getStateTransitionOffset('A', 'B', 0, 1, true);
+        const reverse = VisualizationPanel.getStateTransitionOffset('B', 'A', 0, 1, true);
+        assert.ok(forward < 0, 'forward transition should shift to one side');
+        assert.ok(reverse > 0, 'reverse transition should shift to the opposite side');
+    });
+
+    test('keeps same-direction transitions centered when no opposite exists', () => {
+        const first = VisualizationPanel.getStateTransitionOffset('A', 'B', 0, 2, false);
+        const second = VisualizationPanel.getStateTransitionOffset('A', 'B', 1, 2, false);
+        assert.strictEqual(first, -7.5);
+        assert.strictEqual(second, 7.5);
+    });
+
+    test('fans out multiple opposite-direction transitions without crossing the centerline', () => {
+        const forwardOffsets = [
+            VisualizationPanel.getStateTransitionOffset('A', 'B', 0, 2, true),
+            VisualizationPanel.getStateTransitionOffset('A', 'B', 1, 2, true),
+        ];
+        const reverseOffsets = [
+            VisualizationPanel.getStateTransitionOffset('B', 'A', 0, 2, true),
+            VisualizationPanel.getStateTransitionOffset('B', 'A', 1, 2, true),
+        ];
+        assert.ok(forwardOffsets.every((offset: number) => offset < 0));
+        assert.ok(reverseOffsets.every((offset: number) => offset > 0));
+    });
+});
